@@ -44,6 +44,28 @@ export const transformParamsSchema = z.object({
     .default(85),
 
   fit: fitModeSchema.default('cover'),
+
+  rotate: z.coerce
+    .number()
+    .int('Rotation must be a whole number of degrees')
+    .min(-360, 'Rotation must be >= -360')
+    .max(360, 'Rotation must be <= 360')
+    .default(0),
+
+  /**
+   * Query strings are always strings, so `?grayscale=true` arrives as the
+   * string "true". The preprocess step normalises "true"/"1" → true and
+   * "false"/"0"/"" → false before Zod's boolean check runs.
+   */
+  grayscale: z.preprocess(
+    (val) => {
+      if (typeof val === 'boolean') return val;
+      if (val === 'true' || val === '1') return true;
+      if (val === 'false' || val === '0' || val === '') return false;
+      return val; // let Zod handle the error for anything else
+    },
+    z.boolean().default(false),
+  ),
 });
 
 export type TransformParamsInput = z.input<typeof transformParamsSchema>;

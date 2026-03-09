@@ -76,6 +76,8 @@ export interface IAssetTransform {
   format: ImageFormat;
   quality: number;  // 1–100
   fit: FitMode;
+  rotate: number;   // degrees, -360–360; 0 = no rotation
+  grayscale: boolean;
 }
 
 // ─── Document Interface ───────────────────────────────────────────────────────
@@ -193,11 +195,13 @@ const AssetStorageSchema = new Schema<IAssetStorage>(
 
 const AssetTransformSchema = new Schema<IAssetTransform>(
   {
-    width:   { type: Number, required: true, min: 1 },
-    height:  { type: Number, required: true, min: 1 },
-    format:  { type: String, enum: ['jpeg', 'png', 'webp', 'avif'], required: true },
-    quality: { type: Number, required: true, min: 1, max: 100 },
-    fit:     { type: String, enum: ['cover', 'contain', 'fill', 'inside', 'outside'], required: true },
+    width:     { type: Number, required: true, min: 1 },
+    height:    { type: Number, required: true, min: 1 },
+    format:    { type: String, enum: ['jpeg', 'png', 'webp', 'avif'], required: true },
+    quality:   { type: Number, required: true, min: 1, max: 100 },
+    fit:       { type: String, enum: ['cover', 'contain', 'fill', 'inside', 'outside'], required: true },
+    rotate:    { type: Number, required: true, default: 0, min: -360, max: 360 },
+    grayscale: { type: Boolean, required: true, default: false },
   },
   { _id: false },
 );
@@ -291,11 +295,13 @@ AssetSchema.pre<IAsset>(
       // This runs on every save so the signature stays consistent if params
       // are ever corrected before the job is picked up by a worker.
       const params: TransformParams = {
-        width:   this.transform.width,
-        height:  this.transform.height,
-        format:  this.transform.format,
-        quality: this.transform.quality,
-        fit:     this.transform.fit,
+        width:     this.transform.width,
+        height:    this.transform.height,
+        format:    this.transform.format,
+        quality:   this.transform.quality,
+        fit:       this.transform.fit,
+        rotate:    this.transform.rotate ?? 0,
+        grayscale: this.transform.grayscale ?? false,
       };
       this.transformSignature = computeTransformSignature(params);
     }

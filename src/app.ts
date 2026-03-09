@@ -6,6 +6,7 @@ import { config } from './config';
 import { pinoOptions } from './lib/logger';
 import { errorHandler, notFoundHandler } from './lib/error-handler';
 import { healthRoutes } from './api/v1/health.routes';
+import { imageRoutes } from './api/v1/images.routes';
 import { redisConnection } from './queue/redis';
 
 /**
@@ -139,9 +140,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Infrastructure routes — unversioned, at root level.
   await app.register(healthRoutes);
 
-  // Business module routes are registered here in future phases:
-  // await app.register(assetRoutes, { prefix: `/api/${config.API_VERSION}/assets` });
-  // await app.register(jobRoutes,   { prefix: `/api/${config.API_VERSION}/jobs` });
+  // Business module routes
+  await app.register(imageRoutes, { prefix: `/api/${config.API_VERSION}/images` });
+  // await app.register(jobRoutes, { prefix: `/api/${config.API_VERSION}/jobs` });
 
   return app;
 }

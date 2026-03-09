@@ -14,6 +14,8 @@ export interface TransformParams {
   format: 'jpeg' | 'png' | 'webp' | 'avif';
   quality: number;
   fit: 'cover' | 'contain' | 'fill' | 'inside' | 'outside';
+  rotate: number;
+  grayscale: boolean;
 }
 
 /**
@@ -37,8 +39,10 @@ export function computeTransformSignature(params: TransformParams): string {
   const canonical = JSON.stringify({
     fit: params.fit,
     format: params.format,
+    grayscale: params.grayscale,
     height: params.height,
     quality: params.quality,
+    rotate: params.rotate,
     width: params.width,
   });
 

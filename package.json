@@ -9,6 +9,9 @@
     "start": "node dist/server.js",
     "worker": "ts-node-dev --respawn --transpile-only src/workers/image.worker.ts",
     "db:indexes": "ts-node-dev --transpile-only src/db/indexes.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },
@@ -26,8 +29,10 @@
   },
   "devDependencies": {
     "@types/node": "^20.14.2",
+    "@vitest/coverage-v8": "^4.0.18",
     "pino-pretty": "^11.2.1",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "vitest": "^3.2.4"
   }
 }

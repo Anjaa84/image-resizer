@@ -190,11 +190,13 @@ export async function findOrCreateDerivedAsset(
   // Compute the signature here so we can use it for the lookup query.
   // The pre-validate hook re-derives it identically on the actual save.
   const transformSignature = computeTransformSignature({
-    width:   input.transform.width,
-    height:  input.transform.height,
-    format:  input.transform.format,
-    quality: input.transform.quality,
-    fit:     input.transform.fit,
+    width:     input.transform.width,
+    height:    input.transform.height,
+    format:    input.transform.format,
+    quality:   input.transform.quality,
+    fit:       input.transform.fit,
+    rotate:    input.transform.rotate ?? 0,
+    grayscale: input.transform.grayscale ?? false,
   });
 
   // ── Layer 1: optimistic read before write ─────────────────────────────────

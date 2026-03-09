@@ -32,6 +32,22 @@ const envSchema = z.object({
   AWS_REGION: z.string().optional(),
   S3_BUCKET: z.string().optional(),
 
+  // ── Transform Decision ─────────────────────────────────────────────────────
+  // Thresholds that control whether a transform runs synchronously (inline,
+  // within the HTTP request) or asynchronously (offloaded to the job queue).
+  // A transform routes async when ANY single threshold is exceeded.
+  //
+  // Tune these for your hardware profile:
+  //   - Lower values push more work to the worker pool, keeping API latency
+  //     predictable at the cost of added queue round-trip latency.
+  //   - Higher values answer small transforms immediately at the cost of
+  //     consuming API worker CPU under bursts.
+  SYNC_MAX_SOURCE_BYTES:  z.coerce.number().int().positive().default(1_048_576),   // 1 MB
+  SYNC_MAX_OUTPUT_PIXELS: z.coerce.number().int().positive().default(2_073_600),   // 1920 × 1080
+  // Maximum number of non-resize operations (rotate, grayscale) that still
+  // qualify for synchronous processing. 0 = resize-only; 1 = plus one extra op.
+  SYNC_MAX_COMPLEXITY:    z.coerce.number().int().min(0).max(3).default(1),
+
   // ── Rate Limiting ──────────────────────────────────────────────────────────
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
