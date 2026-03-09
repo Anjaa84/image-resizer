@@ -62,6 +62,19 @@ export interface StorageDriver {
   exists(key: string): Promise<boolean>;
 
   /**
+   * Verifies that the storage backend is reachable and writable.
+   *
+   * Called exclusively by the /ready health probe. Must complete quickly —
+   * the probe timeout (typically 5–10 s) bounds the overall check budget.
+   *
+   *   LocalStorage — asserts that UPLOAD_DIR exists and is readable + writable.
+   *   S3Storage     — should issue a HeadBucket or lightweight HeadObject call.
+   *
+   * @throws any error that indicates the backend is unreachable or misconfigured.
+   */
+  ping(): Promise<void>;
+
+  /**
    * Returns a fully-qualified URL that an HTTP client can use to download
    * the file directly — without going through the application server.
    *

@@ -39,12 +39,14 @@ export type JobStatus = 'queued' | 'active' | 'completed' | 'failed' | 'cancelle
  * enforces correctness at the enqueue site.
  */
 export interface ResizePayload {
-  type: 'resize';
-  width: number;
-  height: number;
-  format: 'jpeg' | 'png' | 'webp' | 'avif';
-  quality: number;
-  fit: 'cover' | 'contain' | 'fill' | 'inside' | 'outside';
+  type:      'resize';
+  width:     number;
+  height:    number;
+  format:    'jpeg' | 'png' | 'webp' | 'avif';
+  quality:   number;
+  fit:       'cover' | 'contain' | 'fill' | 'inside' | 'outside';
+  rotate:    number;   // degrees; 0 = no rotation
+  grayscale: boolean;
 }
 
 export interface ConvertPayload {

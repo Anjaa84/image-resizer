@@ -1,0 +1,30 @@
+# Dependencies — reinstalled inside the image
+node_modules
+
+# Compiled output — rebuilt inside the image via npm run build
+dist
+
+# Secrets — never copy into the image
+.env
+.env.local
+.env.production
+
+# Runtime artefacts — provided via Docker volumes at runtime
+uploads
+logs
+
+# Test and development files — not needed in the image
+tests
+coverage
+*.test.ts
+*.spec.ts
+
+# Documentation
+*.md
+architecture.md
+
+# Editor / OS noise
+.git
+.gitignore
+.DS_Store
+*.log

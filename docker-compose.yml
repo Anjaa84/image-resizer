@@ -1,12 +1,12 @@
-version: '3.9'
-
 services:
+  # ─── API ─────────────────────────────────────────────────────────────────────
   api:
     build:
       context: .
       target: runner
     container_name: image-resizer-api
     restart: unless-stopped
+    init: true            # forwards signals correctly; reaps zombie processes
     ports:
       - '3000:3000'
     env_file:
@@ -19,15 +19,29 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'node', '-e',
+             "require('http').get('http://localhost:3000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
     networks:
       - app-network
 
+  # ─── Worker ──────────────────────────────────────────────────────────────────
   worker:
     build:
       context: .
       target: runner
     container_name: image-resizer-worker
     restart: unless-stopped
+    init: true
     command: node dist/workers/image.worker.js
     env_file:
       - .env
@@ -38,9 +52,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
     networks:
       - app-network
 
+  # ─── MongoDB ─────────────────────────────────────────────────────────────────
   mongo:
     image: mongo:7
     container_name: image-resizer-mongo
@@ -54,9 +74,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
     networks:
       - app-network
 
+  # ─── Redis ───────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: image-resizer-redis
@@ -65,21 +92,31 @@ services:
       - '6379:6379'
     volumes:
       - redis-data:/data
+    # Persist every 60s if at least 1 key changed; keeps the queue durable
+    # across container restarts without full AOF overhead.
     command: redis-server --save 60 1 --loglevel warning
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
     networks:
       - app-network
 
+# ─── Volumes ──────────────────────────────────────────────────────────────────
 volumes:
-  mongo-data:
-  redis-data:
-  uploads:
-  logs:
+  mongo-data:   # MongoDB data files
+  redis-data:   # Redis RDB snapshots
+  uploads:      # Uploaded and processed image files (shared between api + worker)
+  logs:         # API access + error logs
 
+# ─── Networks ─────────────────────────────────────────────────────────────────
 networks:
   app-network:
     driver: bridge

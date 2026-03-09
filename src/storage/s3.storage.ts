@@ -126,6 +126,16 @@ export class S3Storage implements StorageDriver {
   }
 
   /**
+   * Verifies S3 bucket reachability.
+   *
+   * Implementation:
+   *   await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }));
+   */
+  async ping(): Promise<void> {
+    throw new Error('S3Storage.ping: not yet implemented. See file header for guide.');
+  }
+
+  /**
    * Returns the CDN or public S3 URL for a stored object.
    * See URL Strategy in the file header for options.
    *

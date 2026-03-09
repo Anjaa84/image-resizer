@@ -18,6 +18,13 @@ export default defineConfig({
       SYNC_MAX_SOURCE_BYTES:  '1048576',
       SYNC_MAX_OUTPUT_PIXELS: '2073600',
       SYNC_MAX_COMPLEXITY:    '1',
+      QUEUE_MAX_ATTEMPTS:     '3',
+      QUEUE_BACKOFF_DELAY_MS: '2000',
+      STORAGE_DELETE_ON_ASSET_DELETE: 'false',
+      MAX_UPLOAD_BYTES:  '52428800',
+      MAX_IMAGE_WIDTH:   '10000',
+      MAX_IMAGE_HEIGHT:  '10000',
+      ALLOWED_MIME_TYPES: 'image/jpeg,image/png,image/webp,image/avif,image/tiff,image/gif,image/heic,image/heif',
     },
 
     coverage: {

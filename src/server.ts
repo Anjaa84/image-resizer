@@ -17,6 +17,7 @@ import { config } from './config';
 import { buildApp } from './app';
 import { connectDB, disconnectDB } from './db/mongoose';
 import { redisConnection } from './queue/redis';
+import { closeImageQueue } from './queue/image.queue';
 import { logger } from './lib/logger';
 
 // ─── Process-Level Error Guards ───────────────────────────────────────────────
@@ -109,14 +110,20 @@ async function start(): Promise<void> {
       await app.close();
       logger.info('HTTP server closed');
 
+      // Drain in-flight enqueue operations before closing Redis.
+      // Any queue.add() calls triggered by the last batch of HTTP requests
+      // must complete before the connection drops.
+      await closeImageQueue();
+      logger.info('Image queue closed');
+
       // Close the MongoDB connection after the HTTP server is closed.
       // This order ensures no in-flight request attempts a DB operation
       // after the connection is gone.
       await disconnectDB();
       logger.info('MongoDB connection closed');
 
-      // Close the Redis connection last, after any rate-limit or queue
-      // operations that may have been triggered by in-flight requests.
+      // Close the Redis connection last — after the queue has flushed and
+      // the rate-limit plugin has no more pending commands.
       await redisConnection.quit();
       logger.info('Redis connection closed');
 

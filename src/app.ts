@@ -7,6 +7,7 @@ import { pinoOptions } from './lib/logger';
 import { errorHandler, notFoundHandler } from './lib/error-handler';
 import { healthRoutes } from './api/v1/health.routes';
 import { imageRoutes } from './api/v1/images.routes';
+import { jobRoutes } from './api/v1/jobs.routes';
 import { redisConnection } from './queue/redis';
 
 /**
@@ -59,9 +60,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(multipart, {
     limits: {
-      fileSize: 50 * 1024 * 1024, // 50 MB hard cap; enforced before Sharp sees the file
-      files: 1,                    // one file per upload request
-      fields: 0,                   // no non-file form fields expected on upload routes
+      fileSize: config.MAX_UPLOAD_BYTES, // enforced before Sharp sees the file
+      files: 1,                          // one file per upload request
+      fields: 0,                         // no non-file form fields expected on upload routes
     },
     // Attach file to req.file() rather than consuming the stream eagerly.
     // This allows the handler to decide whether to process or reject the file
@@ -142,7 +143,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Business module routes
   await app.register(imageRoutes, { prefix: `/api/${config.API_VERSION}/images` });
-  // await app.register(jobRoutes, { prefix: `/api/${config.API_VERSION}/jobs` });
+  await app.register(jobRoutes,   { prefix: `/api/${config.API_VERSION}/jobs` });
 
   return app;
 }

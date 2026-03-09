@@ -25,16 +25,17 @@ import type { LeanAsset } from './asset.model';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-/** Hard cap on uploaded file size. Must match or be lower than the multipart plugin limit. */
-export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB
+/**
+ * Re-exported from config so controllers can surface the limit in error
+ * messages without reaching into the config module directly.
+ */
+export const MAX_UPLOAD_BYTES = config.MAX_UPLOAD_BYTES;
 
 /**
- * Maps Sharp's format identifiers to canonical MIME types for all formats
- * Sharp can decode (input formats). This is intentionally broader than the
- * output format list — we accept any image Sharp can read, but only output
- * jpeg/png/webp/avif.
+ * Full map of every format Sharp can decode → canonical MIME type.
+ * Kept separate so we never lose track of Sharp's total capabilities.
  */
-const ACCEPTED_SHARP_FORMATS: Record<string, string> = {
+const ALL_SHARP_FORMATS: Record<string, string> = {
   jpeg: 'image/jpeg',
   png:  'image/png',
   webp: 'image/webp',
@@ -44,6 +45,19 @@ const ACCEPTED_SHARP_FORMATS: Record<string, string> = {
   heic: 'image/heic',
   heif: 'image/heif',
 };
+
+/**
+ * Effective accepted formats — a subset of ALL_SHARP_FORMATS filtered by
+ * ALLOWED_MIME_TYPES from config. Computed once at module load time since
+ * config is immutable after startup.
+ *
+ * Operators can restrict uploads to specific formats (e.g. jpeg+png only)
+ * without changing code by adjusting ALLOWED_MIME_TYPES in the environment.
+ */
+const allowedMimeSet = new Set(config.ALLOWED_MIME_TYPES);
+const ACCEPTED_SHARP_FORMATS: Record<string, string> = Object.fromEntries(
+  Object.entries(ALL_SHARP_FORMATS).filter(([, mime]) => allowedMimeSet.has(mime)),
+);
 
 const ACCEPTED_MIME_LIST = Object.values(ACCEPTED_SHARP_FORMATS);
 

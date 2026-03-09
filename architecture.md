@@ -293,25 +293,35 @@ Upload request arrives
 
 ## 6. Sync vs Async Processing Strategy
 
-The system uses a **hybrid** model: the upload is synchronous, the processing is asynchronous.
+The system uses a **hybrid execution model**: `POST /api/v1/images/:id/transform` either runs the transform inline (sync, returns `200`) or enqueues it (async, returns `202`). The decision is made per-request based on configurable thresholds.
 
-### Why the upload is synchronous
+### Decision logic
 
-The file must be saved to storage and its metadata persisted to MongoDB before the request returns. If the API returned a job ID without having saved the file first, a subsequent worker could attempt to process a file that doesn't exist yet. The upload I/O is streaming (not held in memory), and its latency is network-bound — acceptable in the request lifecycle.
+A transform is executed synchronously only when ALL of the following are true:
 
-### Why the processing is asynchronous
+1. The source file is ≤ `SYNC_MAX_SOURCE_BYTES` (default 1 MB)
+2. The output canvas is ≤ `SYNC_MAX_OUTPUT_PIXELS` (default 1920×1080 = ~2 MP)
+3. The number of non-resize operations (rotate, grayscale) is ≤ `SYNC_MAX_COMPLEXITY` (default 1)
 
-Sharp's CPU time is not predictable. A 1 KB PNG is done in milliseconds. A 200 MP TIFF with a complex transform may take 10 seconds. Blocking an HTTP connection for 10 seconds is untenable in production — it ties up a socket, burns through rate limits, and makes the client responsible for very long timeouts.
+If any threshold is exceeded, the job is enqueued and the client receives a `202 Accepted` with a `jobId` to poll.
 
-The async model means:
-- The API always returns quickly (202 Accepted).
-- The client polls `GET /api/v1/images/:id` to check status.
-- The worker retries on failure without the client needing to resubmit.
-- Worker and API resources scale independently.
+### Why the hybrid model
 
-### When synchronous processing is appropriate
+**Synchronous path** gives instant responses for common use cases — a small thumbnail or a format conversion of a compressed image. No polling, no job records, no BullMQ overhead. The client gets the output asset back in the `200` response body.
 
-For transformations that complete in under ~200ms (small thumbnails, simple format conversions on small files), a synchronous path could be offered as a premium low-latency endpoint. This would bypass the queue and call Sharp inline. It is not implemented here because it requires bounding input file sizes and formats strictly — a future consideration once typical job durations are measured in production.
+**Asynchronous path** keeps API latency predictable for large or complex transforms. Sharp's CPU time on a 50 MP TIFF can be several seconds. Blocking an HTTP connection for that duration is untenable — it ties up a socket and makes the client responsible for very long timeouts. The async model means the API always returns quickly and the worker retries on failure without the client resubmitting.
+
+### Deduplication across both paths
+
+The same deduplication check (`findOrCreateDerivedAsset`) runs on both paths. If a derived asset already exists for the `(sourceAssetId, transformSignature)` pair — regardless of how it was produced — the request is short-circuited and returns the existing asset. Two concurrent callers requesting the same transform of the same image converge on the same result.
+
+### Threshold tuning
+
+| Variable                | Default     | Guidance                                                            |
+|-------------------------|-------------|---------------------------------------------------------------------|
+| `SYNC_MAX_SOURCE_BYTES` | `1048576`   | Lower to push more to the worker; raise for faster small-file paths |
+| `SYNC_MAX_OUTPUT_PIXELS`| `2073600`   | ~2 MP; stays well within a typical 512 MB worker memory budget      |
+| `SYNC_MAX_COMPLEXITY`   | `1`         | `0` = resize-only sync; `1` = resize + one extra op (rotate or grayscale) |
 
 ---
 
@@ -391,19 +401,26 @@ The worker reads the original file and writes the output file on every job. If `
 ## 10. Security Considerations
 
 ### Input validation — always reject at the boundary
-All multipart uploads and query parameters are validated with Zod before they touch the service layer. Unknown fields are stripped. Numeric parameters (width, height, quality) are bounded. This prevents trivially malformed input from reaching Sharp.
+All multipart uploads, query parameters, and JSON bodies are validated with Zod before they touch the service layer. Unknown fields are stripped. Numeric parameters (width, height, quality) are bounded. This prevents trivially malformed input from reaching Sharp.
 
 ### File type validation — do not trust Content-Type
-The client-supplied MIME type in a multipart request is untrustworthy. Sharp should be used to detect the actual image format by reading the file header, not the declared MIME type. An attacker who uploads a disguised SVG (which can contain JavaScript) or a zip bomb (a tiny file that decompresses to gigabytes) can cause significant harm if validation is superficial.
+The client-supplied MIME type in a multipart request is untrustworthy. Sharp detects the actual image format by reading the file header, not the declared MIME type. An attacker who uploads a disguised SVG (which can contain JavaScript) or a zip bomb is rejected before any processing occurs.
+
+`ALLOWED_MIME_TYPES` provides a second layer of control: even if Sharp can decode a format, the API will reject it if it is not in the configured allow-list. This lets operators restrict acceptable input to a minimal set without code changes.
+
+### Upload and dimension limits
+`MAX_UPLOAD_BYTES` (default 50 MB) is enforced at two layers: the `@fastify/multipart` plugin cuts the stream before it is fully read, and the service layer performs a secondary check on the buffered size.
+
+`MAX_IMAGE_WIDTH` and `MAX_IMAGE_HEIGHT` (default 10,000 px) cap the transform output dimensions. Requesting a 100,000×100,000 output would allocate ~40 GB of memory on the worker — these limits prevent that attack surface.
 
 ### Output path traversal
-The `destinationKey` passed to the storage driver must be sanitized. A crafted filename containing `../` sequences could write output files to arbitrary paths on local storage. Keys should be derived from UUIDs or hashes, never from user-supplied filenames.
+Storage keys are derived from SHA-256 content hashes and MongoDB ObjectIds — never from user-supplied filenames. `LocalStorage.resolvePath()` additionally verifies that the resolved path stays within `baseDir`, rejecting any key containing `../` sequences.
 
 ### Rate limiting
-`@fastify/rate-limit` is applied globally with Redis as the backing store. Per-IP and optionally per-API-key limits prevent single clients from flooding the upload endpoint or exhausting the queue.
+`@fastify/rate-limit` is applied globally with Redis as the backing store, so limits are consistent across all API replicas. Per-IP limits prevent single clients from flooding the upload endpoint or exhausting the queue. Configure with `RATE_LIMIT_MAX` (default 100 req/min per IP).
 
-### Upload size limits
-Fastify's multipart plugin enforces a hard `fileSize` limit. This should be set to the maximum legitimate input size for the use case and enforced additionally at the reverse proxy level to reject oversized requests before they reach the Node.js process.
+### Safe error responses
+Unexpected errors (5xx) never surface internal details to the client. Stack traces, raw database error messages, and internal paths are logged server-side only. The client always receives a stable `{ statusCode, error, message, code, requestId }` shape. The `requestId` allows support to correlate the client-visible error with the server-side log entry.
 
 ### Worker process isolation
 The worker runs as a non-root user inside Docker (`appuser` in the Dockerfile). Sharp is sandboxed to the application directory. The worker has no HTTP surface area — it communicates only through Redis and MongoDB, both of which should be on a private network with no public exposure.
@@ -416,19 +433,35 @@ Credentials (MongoDB URI, Redis password, AWS keys) must never be committed to t
 ## 11. Reliability Considerations
 
 ### Graceful shutdown
-Both the API and worker handle `SIGINT` and `SIGTERM`. The API stops accepting new connections, drains in-flight requests, then disconnects from MongoDB. The worker stops accepting new jobs from BullMQ, waits for active jobs to complete, then exits. This prevents data loss or partial writes during deployments and container restarts.
+Both the API (`server.ts`) and worker (`image.worker.ts`) handle `SIGINT` and `SIGTERM`. The shutdown sequence is ordered:
+
+1. Stop accepting new HTTP connections (API) / new BullMQ jobs (worker)
+2. Wait for in-flight requests / active jobs to complete
+3. Drain the BullMQ queue (API: flush any pending `queue.add()` calls)
+4. Close MongoDB, then Redis — in that order to avoid DB operations after disconnection
+
+A hard timeout (`SHUTDOWN_TIMEOUT_MS`, default 10 s) force-kills the process if any step stalls. This prevents the container from hanging indefinitely and triggering `SIGKILL` from the orchestrator after its own timeout, which could leave jobs in `active` state until BullMQ's stall detection reclaims them.
+
+The `isShuttingDown` guard prevents double-shutdown if multiple signals arrive in quick succession (e.g., `SIGTERM` followed immediately by `SIGINT` from Docker Compose).
 
 ### Job retries and backoff
-BullMQ is configured with `attempts: 3` and `exponential backoff`. Transient failures (storage unavailable, MongoDB timeout) are retried automatically. Permanent failures (corrupt input file, unsupported format) will exhaust retries and land in the failed state, visible in the Redis queue and recorded in the Job document.
+BullMQ is configured with `QUEUE_MAX_ATTEMPTS` (default 3) and exponential backoff starting at `QUEUE_BACKOFF_DELAY_MS` (default 2 s): attempt 1 → 2 s, attempt 2 → 4 s, attempt 3 → 8 s. Transient failures (storage unavailable, MongoDB timeout) are retried automatically. Permanent failures (corrupt input, unsupported format) exhaust retries and land in the `failed` state — visible in the Redis queue and recorded in the Job document as `errorMessage`.
 
 ### Idempotent job processing
-Each job carries a `jobId` derived from the Image document's `_id`. If a worker crashes mid-job, BullMQ's stalled job detection re-queues it. The worker must be able to re-process a job safely — writing to the same output key (overwriting) and upserting the MongoDB document rather than inserting.
+Each job carries a `bullJobId` and an `outputAssetId`. If a worker crashes mid-job, BullMQ's stalled job detection re-queues it. The worker writes to the same output storage key (content-addressed, so overwriting is safe) and uses `updateAssetStatus` (update by `_id`) rather than insert, making re-processing safe.
 
-### Health endpoint
-`GET /health` checks live connectivity to MongoDB and Redis and returns `503` if either is degraded. This is the signal for load balancers and orchestrators (Kubernetes liveness/readiness probes) to stop routing traffic and potentially restart the container.
+### Health and readiness probes
+`GET /health` — liveness probe. Returns `200` unconditionally while the event loop is running. Never checks external dependencies — dependency failures must not trigger container restarts, only traffic removal.
+
+`GET /ready` — readiness probe. Runs three dependency checks concurrently with a `CHECK_TIMEOUT_MS` timeout per check (default 3 s):
+- MongoDB: `admin().command({ ping: 1 })`
+- Redis: `PING` command
+- Storage: `storage.ping()` (verifies upload dir or S3 bucket is accessible)
+
+Returns `503` with per-check details if any check fails or times out. Load balancers stop routing traffic to the instance; the container is NOT restarted (that is the liveness probe's job). Per-check `latencyMs` is included in the response so operators can detect slow-but-not-failed dependencies.
 
 ### Structured logging
-Every significant operation — request received, job enqueued, job started, job completed, job failed — emits a Pino JSON log with a consistent field schema (`jobId`, `imageId`, `err`, `durationMs`). In production these flow to a log aggregator (Loki, Datadog, CloudWatch) where they can be alerted on and queried. Unstructured logs are not queryable at scale.
+Every significant operation emits a Pino JSON log with a consistent field schema (`bullJobId`, `assetId`, `err`, `latencyMs`, `reqId`). In production these flow to a log aggregator (Loki, Datadog, CloudWatch) where they can be alerted on and queried. The `X-Request-Id` header is echoed back on every response so clients can correlate a failed response with the server-side log entry.
 
 ---
 
@@ -438,22 +471,32 @@ Every significant operation — request received, job enqueued, job started, job
 src/
 ├── api/
 │   └── v1/
-│       ├── images.routes.ts     # Route definitions for /api/v1/images
-│       └── health.routes.ts     # GET /health — liveness + dependency probe
+│       ├── images.routes.ts     # Routes for /api/v1/images (upload, list, get, download, delete, transform)
+│       ├── jobs.routes.ts       # Routes for /api/v1/jobs (status polling)
+│       └── health.routes.ts     # GET /health (liveness) + GET /ready (readiness)
 │
 ├── modules/
 │   ├── images/
-│   │   ├── asset.model.ts       # Mongoose schema + IAsset interface (assets collection)
-│   │   ├── asset.schema.ts      # Zod schemas for request validation
-│   │   ├── image.service.ts     # Orchestrates upload, dedup checks, persistence, enqueueing
-│   │   └── image.controller.ts  # HTTP handlers — thin, delegates to service
+│   │   ├── asset.model.ts           # Mongoose schema + LeanAsset type (assets collection)
+│   │   ├── asset.repository.ts      # All MongoDB queries for assets (findById, create, softDelete…)
+│   │   ├── asset.schema.ts          # Zod schemas for upload/transform/list requests
+│   │   ├── asset.service.ts         # getAsset, downloadAsset, deleteAsset
+│   │   ├── image.controller.ts      # HTTP handlers — thin, delegates to services
+│   │   ├── image-processor.ts       # Sharp pipeline (rotate → resize → grayscale → toFormat)
+│   │   ├── transform-execute.service.ts  # Sync vs async decision + dedup check
+│   │   └── upload.service.ts        # Upload original: size gate, format detect, hash, dedup, persist
 │   └── jobs/
-│       ├── job.model.ts         # Mongoose schema + IJob interface (jobs collection)
-│       └── job.service.ts       # Job status queries, retry triggers
+│       ├── job.model.ts         # Mongoose schema + LeanJob type (jobs collection)
+│       ├── job.repository.ts    # All MongoDB queries for jobs (findById, create, markActive…)
+│       ├── job.schema.ts        # Zod schema for :jobId path param
+│       ├── job.controller.ts    # HTTP handler for GET /jobs/:jobId
+│       └── job.service.ts       # getJobStatus — hydrates outputAsset on completed jobs
 │
 ├── lib/
 │   ├── logger.ts                # Pino singleton — shared by API and worker
-│   ├── errors.ts                # Typed error hierarchy (AppError, NotFoundError…)
+│   ├── errors.ts                # Typed error hierarchy (AppError, NotFoundError, ValidationError…)
+│   ├── error-handler.ts         # Fastify error handler — maps errors to stable response shape
+│   ├── health.service.ts        # checkMongo / checkRedis / checkStorage / runReadinessChecks
 │   └── transform-signature.ts   # Deterministic SHA-256 hash of normalized transform params
 │
 ├── config/
@@ -464,18 +507,30 @@ src/
 │   └── indexes.ts               # Explicit index sync script — run before production deploy
 │
 ├── queue/
-│   ├── redis.ts                 # IORedis connection (shared across processes)
-│   └── image.queue.ts           # BullMQ Queue instance + ImageResizeJobData type
+│   ├── redis.ts                 # IORedis connection + isRedisReady() (shared across processes)
+│   └── image.queue.ts           # BullMQ Queue instance + ImageJobPayload type
 │
 ├── storage/
-│   ├── storage.interface.ts     # StorageDriver interface: save / getUrl / delete
-│   ├── local.storage.ts         # Disk implementation
-│   ├── s3.storage.ts            # AWS S3 implementation (stub)
+│   ├── storage.interface.ts     # StorageDriver interface: save / read / delete / exists / getUrl / ping
+│   ├── local.storage.ts         # Disk implementation with path-traversal guard
+│   ├── s3.storage.ts            # AWS S3 implementation (stub — see file header for guide)
 │   └── index.ts                 # Factory: selects driver from STORAGE_DRIVER env
 │
 ├── workers/
-│   └── image.worker.ts          # BullMQ Worker — Sharp pipeline runs here
+│   ├── image.worker.ts          # BullMQ Worker — wires executeTransformJob to the queue
+│   └── job-processor.ts         # Full pipeline: read → process → save → update MongoDB
 │
-├── app.ts                       # Fastify instance: plugins, error handler, routes
-└── server.ts                    # Entry point: boot sequence, signal handling
+├── app.ts                       # Fastify instance: plugins, hooks, error handlers, routes
+└── server.ts                    # Entry point: boot sequence, graceful shutdown, signal handling
+
+tests/
+├── api/
+│   ├── upload.service.test.ts
+│   ├── transform-execute.service.test.ts
+│   ├── asset.service.test.ts
+│   └── job.service.test.ts
+├── workers/
+│   └── job-processor.test.ts
+└── lib/
+    └── health.service.test.ts
 ```

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { config } from '../../config';
 
 // ─── Shared Primitives ────────────────────────────────────────────────────────
 
@@ -26,13 +27,13 @@ export const transformParamsSchema = z.object({
     .number()
     .int('Width must be an integer')
     .positive('Width must be positive')
-    .max(10_000, 'Width cannot exceed 10,000px'),
+    .max(config.MAX_IMAGE_WIDTH, `Width cannot exceed ${config.MAX_IMAGE_WIDTH}px`),
 
   height: z.coerce
     .number()
     .int('Height must be an integer')
     .positive('Height must be positive')
-    .max(10_000, 'Height cannot exceed 10,000px'),
+    .max(config.MAX_IMAGE_HEIGHT, `Height cannot exceed ${config.MAX_IMAGE_HEIGHT}px`),
 
   format: imageFormatSchema.default('webp'),
 
@@ -70,6 +71,15 @@ export const transformParamsSchema = z.object({
 
 export type TransformParamsInput = z.input<typeof transformParamsSchema>;
 export type TransformParamsOutput = z.output<typeof transformParamsSchema>;
+
+/**
+ * Validates the JSON body of POST /api/v1/images/:id/transform.
+ *
+ * Same rules as transformParamsSchema (which targets query strings) but used
+ * for JSON bodies where numbers arrive already parsed. z.coerce is harmless
+ * here (number → number is a no-op) so the same schema works for both.
+ */
+export const transformBodySchema = transformParamsSchema;
 
 // ─── Request Schemas ──────────────────────────────────────────────────────────
 

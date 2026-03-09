@@ -125,6 +125,14 @@ export class LocalStorage implements StorageDriver {
   }
 
   /**
+   * Verifies that UPLOAD_DIR exists and is readable + writable.
+   * Throws an ENOENT/EACCES error if the directory is missing or inaccessible.
+   */
+  async ping(): Promise<void> {
+    await fs.access(this.baseDir, fs.constants.R_OK | fs.constants.W_OK);
+  }
+
+  /**
    * Returns the publicly-accessible URL for the file.
    * Format: {APP_BASE_URL}/files/{key}
    *

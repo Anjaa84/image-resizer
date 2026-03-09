@@ -5,8 +5,10 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "dev:worker": "ts-node-dev --respawn --transpile-only src/workers/image.worker.ts",
     "build": "tsc",
     "start": "node dist/server.js",
+    "start:worker": "node dist/workers/image.worker.js",
     "worker": "ts-node-dev --respawn --transpile-only src/workers/image.worker.ts",
     "db:indexes": "ts-node-dev --transpile-only src/db/indexes.ts",
     "test": "vitest run",
