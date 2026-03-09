@@ -22,6 +22,9 @@ const envSchema = z.object({
   // ── Storage ────────────────────────────────────────────────────────────────
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
   UPLOAD_DIR: z.string().default('./uploads'),
+  // Base URL for constructing publicly-accessible file URLs (local storage only).
+  // For S3, URLs are derived from the bucket/CDN configuration instead.
+  APP_BASE_URL: z.string().url().default('http://localhost:3000'),
 
   // ── AWS S3 (required when STORAGE_DRIVER=s3) ───────────────────────────────
   AWS_ACCESS_KEY_ID: z.string().optional(),
